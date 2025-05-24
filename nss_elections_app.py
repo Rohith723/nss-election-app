@@ -288,43 +288,52 @@ elif menu == "Admin Login":
                 with col2:
                     if st.button(f"Remove", key=f"del_vol_{row['student_id']}"):
                         delete_volunteer(row['student_id'])
-                        st.success(f"Deleted volunteer {row['name']}")
+                        st.success(f"Deleted volunteer {row['student_id']}")
                         st.rerun()
         else:
             st.info("No volunteers registered.")
 
-        # -------- Download Volunteers Excel --------
-        if not volunteers.empty:
-            excel_volunteers = to_excel(volunteers, 'Volunteers')
+        st.markdown("---")
+
+        st.subheader("📊 View Results")
+        results_df = get_results_df()
+        if not results_df.empty:
+            st.dataframe(results_df)
+        else:
+            st.info("No votes recorded yet.")
+
+        st.markdown("---")
+
+        st.subheader("📥 Download Data")
+        vol_df = get_volunteers_df()
+        cand_df = get_candidates_df()
+        res_df = get_results_df()
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            excel_vol = to_excel(vol_df, "Volunteers")
             st.download_button(
-                label="📥 Download Volunteers Excel",
-                data=excel_volunteers,
+                label="Download Volunteers Excel",
+                data=excel_vol,
                 file_name="volunteers.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-        st.markdown("---")
-
-        # -------- Download Candidates Excel --------
-        candidates_df = get_candidates_df()
-        if not candidates_df.empty:
-            excel_candidates = to_excel(candidates_df, 'Candidates')
+        with col2:
+            excel_cand = to_excel(cand_df, "Candidates")
             st.download_button(
-                label="📥 Download Candidates Excel",
-                data=excel_candidates,
+                label="Download Candidates Excel",
+                data=excel_cand,
                 file_name="candidates.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-        else:
-            st.info("No candidates registered.")
-
-        st.markdown("---")
-
-        st.subheader("📊 Voting Results")
-        results = get_results_df()
-        if not results.empty:
-            st.table(results)
-        else:
-            st.info("No votes have been cast yet.")
+        with col3:
+            excel_res = to_excel(res_df, "Results")
+            st.download_button(
+                label="Download Results Excel",
+                data=excel_res,
+                file_name="results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
         if st.button("Logout"):
             st.session_state['admin_logged_in'] = False
