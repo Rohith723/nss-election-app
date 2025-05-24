@@ -38,8 +38,6 @@ def init_db():
             votes INTEGER DEFAULT 0
         )
     ''')
-
-    # Default admin account
     c.execute("SELECT * FROM admin WHERE username = 'admin'")
     if not c.fetchone():
         c.execute("INSERT INTO admin (username, password) VALUES (?, ?)",
@@ -71,13 +69,6 @@ def get_volunteer(student_id):
     vol = c.fetchone()
     conn.close()
     return vol
-
-def delete_volunteer(student_id):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM volunteers WHERE student_id = ?", (student_id.lower().strip(),))
-    conn.commit()
-    conn.close()
 
 def mark_voted(student_id):
     conn = get_db_connection()
@@ -123,6 +114,13 @@ def delete_candidate(candidate_id):
     conn.commit()
     conn.close()
 
+def delete_volunteer(student_id):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM volunteers WHERE student_id = ?", (student_id.lower().strip(),))
+    conn.commit()
+    conn.close()
+
 def check_admin_credentials(username, password):
     conn = get_db_connection()
     c = conn.cursor()
@@ -160,7 +158,7 @@ def get_results_df():
 
 def to_excel(df, sheet_name='Sheet1'):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name=sheet_name)
     return output.getvalue()
 
@@ -184,32 +182,38 @@ if menu == "Volunteer Login":
     if not st.session_state['volunteer_logged_in']:
         student_id = st.text_input("Enter your Student ID")
         if st.button("Login"):
-            volunteer = get_volunteer(student_id)
-            if not volunteer:
-                st.error("❌ You are not a registered NSS volunteer.")
+            if not student_id:
+                st.warning("Please enter your Student ID.")
             else:
-                st.session_state['volunteer_logged_in'] = True
-                st.session_state['volunteer_info'] = volunteer
-                st.rerun()
+                volunteer = get_volunteer(student_id)
+                if not volunteer:
+                    st.error("❌ You are not a registered NSS volunteer.")
+                else:
+                    st.session_state['volunteer_logged_in'] = True
+                    st.session_state['volunteer_info'] = volunteer
+                    st.rerun()
     else:
         student_id, name, voted = st.session_state['volunteer_info']
         st.success(f"Welcome {name}!")
 
         if voted:
-            st.info("✅ You have already voted. Thank you!")
+            st.info("You have already voted. Thank you!")
         else:
             st.info("Please cast your vote:")
             candidates = get_candidates()
-            for cid, cname, photo, _ in candidates:
-                col1, col2 = st.columns([1, 3])
-                with col1:
-                    st.image(photo, width=80)
-                with col2:
-                    if st.button(f"Vote for {cname}", key=f"vote_{cid}"):
-                        vote_for_candidate(cid, student_id)
-                        st.success(f"✅ Vote recorded for {cname}.")
-                        st.session_state['volunteer_info'] = (student_id, name, 1)
-                        st.rerun()
+            if not candidates:
+                st.warning("No candidates available.")
+            else:
+                for cid, cname, photo, _ in candidates:
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        st.image(photo, width=80)
+                    with col2:
+                        if st.button(f"Vote for {cname}", key=f"vote_{cid}"):
+                            vote_for_candidate(cid, student_id)
+                            st.success(f"✅ Vote recorded for {cname}.")
+                            st.session_state['volunteer_info'] = (student_id, name, 1)
+                            st.rerun()
 
         if st.button("Logout"):
             st.session_state['volunteer_logged_in'] = False
@@ -230,9 +234,8 @@ elif menu == "Admin Login":
             else:
                 st.error("❌ Invalid credentials.")
     else:
-        st.success("✅ Admin logged in.")
+        st.success("Admin logged in.")
 
-        # Add Volunteer
         st.subheader("➕ Register NSS Volunteer")
         with st.form("volunteer_form"):
             vol_id = st.text_input("Student ID")
@@ -240,25 +243,14 @@ elif menu == "Admin Login":
             if st.form_submit_button("Add Volunteer"):
                 if vol_id and vol_name:
                     if add_volunteer(vol_id, vol_name):
-                        st.success("✅ Volunteer added.")
+                        st.success("Volunteer added.")
                     else:
-                        st.warning("⚠️ Student ID already exists.")
+                        st.warning("Student ID already exists.")
                 else:
                     st.warning("Please fill all fields.")
 
-        # Remove Volunteer
-        st.subheader("🗑️ Remove Volunteer")
-        vols_df = get_volunteers_df()
-        if not vols_df.empty:
-            selected_vol_id = st.selectbox("Select Volunteer to Remove", vols_df['student_id'].tolist())
-            if st.button("Remove Volunteer"):
-                delete_volunteer(selected_vol_id)
-                st.success("✅ Volunteer removed.")
-                st.rerun()
-
         st.markdown("---")
 
-        # Add Candidate
         st.subheader("➕ Add Candidate")
         with st.form("candidate_form"):
             cand_name = st.text_input("Candidate Name")
@@ -266,11 +258,12 @@ elif menu == "Admin Login":
             if st.form_submit_button("Add Candidate"):
                 if cand_name and cand_photo:
                     add_candidate(cand_name, cand_photo)
-                    st.success("✅ Candidate added.")
+                    st.success("Candidate added.")
                 else:
                     st.warning("Fill both name and photo.")
 
-        # Remove Candidate
+        st.markdown("---")
+
         st.subheader("🗑️ Remove Candidate")
         candidates = get_candidates()
         for cid, cname, _, _ in candidates:
@@ -278,39 +271,61 @@ elif menu == "Admin Login":
             with col1:
                 st.write(f"{cname}")
             with col2:
-                if st.button(f"Remove", key=f"del_{cid}"):
+                if st.button(f"Remove", key=f"del_cand_{cid}"):
                     delete_candidate(cid)
-                    st.success(f"✅ Deleted {cname}")
+                    st.success(f"Deleted {cname}")
                     st.rerun()
 
         st.markdown("---")
 
-        # Results
-        st.subheader("📊 Election Results")
-        results = get_results()
-        if results:
-            for name, votes in results:
-                st.info(f"{name} - {votes} vote(s)")
+        st.subheader("🗑️ Remove Volunteer")
+        volunteers = get_volunteers_df()
+        if not volunteers.empty:
+            for idx, row in volunteers.iterrows():
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"{row['student_id']} - {row['name']}")
+                with col2:
+                    if st.button(f"Remove", key=f"del_vol_{row['student_id']}"):
+                        delete_volunteer(row['student_id'])
+                        st.success(f"Deleted volunteer {row['name']}")
+                        st.rerun()
         else:
-            st.info("No votes yet.")
+            st.info("No volunteers registered.")
+
+        # -------- Download Volunteers Excel --------
+        if not volunteers.empty:
+            excel_volunteers = to_excel(volunteers, 'Volunteers')
+            st.download_button(
+                label="📥 Download Volunteers Excel",
+                data=excel_volunteers,
+                file_name="volunteers.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        st.markdown("---")
+
+        # -------- Download Candidates Excel --------
+        candidates_df = get_candidates_df()
+        if not candidates_df.empty:
+            excel_candidates = to_excel(candidates_df, 'Candidates')
+            st.download_button(
+                label="📥 Download Candidates Excel",
+                data=excel_candidates,
+                file_name="candidates.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("No candidates registered.")
 
         st.markdown("---")
 
-        # Data Download
-        st.subheader("📥 Download Data")
+        st.subheader("📊 Voting Results")
+        results = get_results_df()
+        if not results.empty:
+            st.table(results)
+        else:
+            st.info("No votes have been cast yet.")
 
-        df_vols = get_volunteers_df()
-        if not df_vols.empty:
-            st.download_button("📥 Volunteers", to_excel(df_vols, 'Volunteers'), "volunteers.xlsx")
-
-        df_cands = get_candidates_df()
-        if not df_cands.empty:
-            st.download_button("📥 Candidates", to_excel(df_cands, 'Candidates'), "candidates.xlsx")
-
-        df_results = get_results_df()
-        if not df_results.empty:
-            st.download_button("📥 Results", to_excel(df_results, 'Results'), "results.xlsx")
-
-        if st.button("Logout Admin"):
+        if st.button("Logout"):
             st.session_state['admin_logged_in'] = False
             st.rerun()
