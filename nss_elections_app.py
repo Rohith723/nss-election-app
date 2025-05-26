@@ -290,7 +290,7 @@ elif menu == "Admin Login":
 
     if not st.session_state['admin_logged_in']:
         username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
+        password = st.text_input("Password", type="password",key="password",autocomplete="off")
         if st.button("Login"):
             if check_admin_credentials(username, password):
                 st.session_state['admin_logged_in'] = True
