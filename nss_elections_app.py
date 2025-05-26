@@ -252,32 +252,64 @@ if menu == "Volunteer Login":
         st.success(f"Welcome {name}!")
 
         if voted:
-            st.info("✅ You have already voted. Thank you!")
-        else:
-            position = st.selectbox("Select Position", positions)
-            if position:
-                conn = get_db_connection()
-                c = conn.cursor()
-                c.execute("SELECT id, name, photo_path FROM candidates WHERE position1 = ?", (position,))
-                candidates_for_pos = c.fetchall()
-                conn.close()
+                        # --- Voting Section for Each Position ---
+            st.header("🗳️ Vote for Candidates")
 
-                if not candidates_for_pos:
-                    st.warning("No candidates available for this position.")
+            conn = get_db_connection()
+            c = conn.cursor()
+
+            # Get all distinct positions
+            c.execute("SELECT DISTINCT position1 FROM candidates")
+            unique_positions = [row[0] for row in c.fetchall()]
+
+            # To store selected candidate per position
+            selected_votes = {}
+
+            for pos in unique_positions:
+                st.subheader(f"Position: {pos}")
+                
+                # Check if already voted for this position
+                if has_voted(student_id, pos):
+                    st.info(f"✅ Already voted for {pos}")
+                    continue
+
+                # Get candidates for this position
+                c.execute("SELECT id, name FROM candidates WHERE position1 = ?", (pos,))
+                candidates = c.fetchall()
+
+                # Prepare radio button options
+                candidate_dict = {name: cid for cid, name in candidates}
+                candidate_names = list(candidate_dict.keys())
+
+                if candidate_names:
+                    selected_name = st.radio(
+                        f"Choose one for {pos}:",
+                        candidate_names,
+                        key=f"radio_{pos}"
+                    )
+                    selected_votes[pos] = candidate_dict[selected_name]
                 else:
-                    for cid, cname, photo_path in candidates_for_pos:
-                        col1, col2 = st.columns([1, 3])
-                        with col1:
-                            st.image(photo_path, width=80)
-                        with col2:
-                            if st.button(f"Vote for {cname}", key=f"vote_{cid}"):
-                                if vote_for_candidate(cid, student_id, position):
-                                    st.success(f"✅ Vote recorded for {cname} as {position}.")
-                                    # Update voted state locally
-                                    st.session_state['volunteer_info'] = (student_id, name, 1)
-                                    st.experimental_rerun()
-                                else:
-                                    st.warning(f"❌ You have already voted for the position {position}.")
+                    st.warning(f"No candidates found for position {pos}.")
+
+            conn.close()
+
+            # Submit votes button
+            if selected_votes:
+                if st.button("Submit All Votes"):
+                    voted_positions = []
+                    for pos, cid in selected_votes.items():
+                        if vote_for_candidate(cid, student_id, pos):
+                            voted_positions.append(pos)
+
+                    if voted_positions:
+                        st.success(f"✅ Votes submitted for: {', '.join(voted_positions)}")
+                        st.session_state['volunteer_info'] = (student_id, name, 1)
+                        st.experimental_rerun()
+                    else:
+                        st.warning("⚠️ You may have already voted for these positions.")
+            else:
+                st.info("Select a candidate for each position to submit your votes.")
+
 
 
         if st.button("Logout"):
