@@ -1,432 +1,398 @@
-import streamlit as st 
+import streamlit as st
 import sqlite3
 import hashlib
-import os
 import pandas as pd
-from io import BytesIO
 
-# ---------- Utility Functions ----------
+# ----------------------------------
+# DB Helpers
+# ----------------------------------
+def get_db_connection():
+    conn = sqlite3.connect('nss_election.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-def get_db_connection():
-    conn = sqlite3.connect('nss_election.db', check_same_thread=False)
-    return conn
-
-def init_db():
+def create_tables():
     conn = get_db_connection()
     c = conn.cursor()
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS admin (
-            username TEXT PRIMARY KEY,
-            password TEXT NOT NULL
-        )
-    ''')
-    
-    c.execute('''
-              
-              CREATE TABLE IF NOT EXISTS votes(
-                  student_id TEXT,
-                  position TEXT,
-                  candidate_id INTEGER,
-                  PRIMARY KEY (student_id,position),
-                  FOREIGN KEY (student_id) REFERENCES volunteers(student_id),
-                  FOREIGN KEY (candidate_id) REFERENCES candidates(id)
-              )
-            ''')
+    c.execute('''CREATE TABLE IF NOT EXISTS admin (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        password TEXT
+    )''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS volunteers (
-            student_id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            year INTEGER NOT NULL,
-            branch TEXT NOT NULL,
-            phone TEXT NOT NULL,
-            voted INTEGER DEFAULT 0
-        )
-    ''')
+    c.execute('''CREATE TABLE IF NOT EXISTS volunteers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        roll_number TEXT UNIQUE,
+        phone_number TEXT,
+        year TEXT
+    )''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS candidates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            roll_number TEXT NOT NULL,
-            year INTEGER NOT NULL,
-            branch TEXT NOT NULL,
-            phone TEXT NOT NULL,
-            position1 TEXT NOT NULL,
-            position2 TEXT,
-            photo_path TEXT,
-            votes INTEGER DEFAULT 0
-        )
-    ''')
+    c.execute('''CREATE TABLE IF NOT EXISTS candidates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        roll_number TEXT UNIQUE,
+        year TEXT,
+        position1 TEXT,
+        position2 TEXT,
+        photo BLOB
+    )''')
 
-    # Default admin credentials
-    c.execute("SELECT * FROM admin WHERE username = 'admin'")
+    c.execute('''CREATE TABLE IF NOT EXISTS votes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        volunteer_id INTEGER,
+        candidate_id INTEGER,
+        position TEXT,
+        FOREIGN KEY (volunteer_id) REFERENCES volunteers(id),
+        FOREIGN KEY (candidate_id) REFERENCES candidates(id)
+    )''')
+
+    conn.commit()
+    conn.close()
+
+def create_admin():
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM admin")
     if not c.fetchone():
-        c.execute("INSERT INTO admin (username, password) VALUES (?, ?)",
-                  ('admin', hash_password('Admin@NSS')))
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# ---------- Database Operations ----------
-def add_volunteer(student_id, name, year, branch, phone):
-    try:
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("INSERT INTO volunteers (student_id, name, year, branch, phone) VALUES (?, ?, ?, ?, ?)",
-                  (student_id.lower().strip(), name.strip(), year, branch.strip(), phone.strip()))
+        c.execute("INSERT INTO admin (username, password) VALUES (?, ?)", 
+                  ('admin', hash_password('admin123')))
         conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    finally:
-        conn.close()
+    conn.close()
 
-
-def delete_candidate(candidate_id):
+def check_admin_credentials(username, password):
     conn = get_db_connection()
     c = conn.cursor()
-    # Optionally delete photo file as well
-    c.execute("SELECT photo_path FROM candidates WHERE id = ?", (candidate_id,))
-    photo_path = c.fetchone()
-    if photo_path and photo_path[0]:
-        try:
-            os.remove(photo_path[0])
-        except Exception:
-            pass
-    c.execute("DELETE FROM candidates WHERE id = ?", (candidate_id,))
+    c.execute("SELECT * FROM admin WHERE username = ? AND password = ?", 
+              (username, hash_password(password)))
+    result = c.fetchone()
+    conn.close()
+    return result
+
+def get_volunteer_by_roll(roll_number):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM volunteers WHERE roll_number = ?", (roll_number,))
+    result = c.fetchone()
+    conn.close()
+    return result
+
+def has_voted(volunteer_id, position):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM votes WHERE volunteer_id = ? AND position = ?", 
+              (volunteer_id, position))
+    result = c.fetchone()
+    conn.close()
+    return result is not None
+
+def submit_vote(volunteer_id, candidate_id, position):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("INSERT INTO votes (volunteer_id, candidate_id, position) VALUES (?, ?, ?)", 
+              (volunteer_id, candidate_id, position))
     conn.commit()
     conn.close()
 
-def delete_volunteer(student_id):
+def get_unique_positions():
     conn = get_db_connection()
     c = conn.cursor()
-    # Remove volunteer and their votes
-    c.execute("DELETE FROM votes WHERE student_id = ?", (student_id.lower().strip(),))
-    c.execute("DELETE FROM volunteers WHERE student_id = ?", (student_id.lower().strip(),))
-    conn.commit()
+    c.execute(
+        "SELECT DISTINCT position1 FROM candidates WHERE position1 IS NOT NULL "
+        "UNION "
+        "SELECT DISTINCT position2 FROM candidates WHERE position2 IS NOT NULL"
+    )
+    positions = [row[0] for row in c.fetchall() if row[0]]
     conn.close()
+    return sorted(positions)
 
+def get_votes_csv():
+    conn = get_db_connection()
+    query = '''
+        SELECT 
+            v.roll_number AS volunteer_roll,
+            c.name AS candidate_name,
+            vt.position AS position
+        FROM votes vt
+        JOIN volunteers v ON vt.volunteer_id = v.id
+        JOIN candidates c ON vt.candidate_id = c.id
+    '''
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
 
-def get_volunteers_df():
+def get_all_volunteers():
     conn = get_db_connection()
     df = pd.read_sql_query("SELECT * FROM volunteers", conn)
     conn.close()
     return df
 
-def get_candidates_df():
+def get_all_candidates():
     conn = get_db_connection()
-    df = pd.read_sql_query("SELECT id, name, roll_number, year, branch, phone, position1, position2, votes FROM candidates", conn)
+    df = pd.read_sql_query("SELECT name, roll_number, year, position1, position2 FROM candidates", conn)
     conn.close()
     return df
 
-
-def get_volunteer(student_id):
+def get_vote_counts():
     conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT student_id, name, voted FROM volunteers WHERE student_id = ?",
-              (student_id.lower().strip(),))
-    vol = c.fetchone()
-    conn.close()
-    return vol
-
-def vote_for_candidate(candidate_id, student_id):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("UPDATE candidates SET votes = votes + 1 WHERE id = ?", (candidate_id,))
-    c.execute("UPDATE volunteers SET voted = 1 WHERE student_id = ?",
-              (student_id.lower().strip(),))
-    conn.commit()
-    conn.close()
-    
-def has_voted(student_id, position):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT 1 FROM votes WHERE student_id = ? AND position = ?", (student_id.lower().strip(), position))
-    voted = c.fetchone() is not None
-    conn.close()
-    return voted
-
-def vote_for_candidate(candidate_id, student_id, position):
-    conn = get_db_connection()
-    c = conn.cursor()
-    # Check if already voted for this position
-    c.execute("SELECT 1 FROM votes WHERE student_id = ? AND position = ?", (student_id.lower().strip(), position))
-    if c.fetchone():
-        conn.close()
-        return False  # Already voted for this position
-
-    # Record the vote
-    c.execute("INSERT INTO votes (student_id, position, candidate_id) VALUES (?, ?, ?)", (student_id.lower().strip(), position, candidate_id))
-
-    # Update candidate's vote count
-    c.execute("UPDATE candidates SET votes = votes + 1 WHERE id = ?", (candidate_id,))
-    conn.commit()
-    conn.close()
-    return True
-
-def add_candidate(name, roll, year, branch, phone, pos1, pos2, photo):
-    os.makedirs("photos", exist_ok=True)
-    filename = f"photos/{roll.replace(' ', '_')}.png"
-    with open(filename, "wb") as f:
-        f.write(photo.getbuffer())
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO candidates (name, roll_number, year, branch, phone, position1, position2, photo_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (name.strip(), roll.strip(), year, branch.strip(), phone.strip(), pos1.strip(), pos2.strip() if pos2 != "None" else None, filename))
-    conn.commit()
-    conn.close()
-
-def get_candidates():
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT id, name, photo_path, votes FROM candidates")
-    candidates = c.fetchall()
-    conn.close()
-    return candidates
-
-def check_admin_credentials(username, password):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT * FROM admin WHERE username = ? AND password = ?",
-              (username, hash_password(password)))
-    result = c.fetchone()
-    conn.close()
-    return result is not None
-
-def get_results_df():
-    conn = get_db_connection()
-    df = pd.read_sql_query("SELECT name, position1, position2, votes FROM candidates ORDER BY votes DESC", conn)
+    df = pd.read_sql_query("""
+        SELECT c.name AS candidate, vt.position, COUNT(*) AS votes
+        FROM votes vt
+        JOIN candidates c ON vt.candidate_id = c.id
+        GROUP BY vt.candidate_id, vt.position
+    """, conn)
     conn.close()
     return df
 
-def to_excel(df, sheet_name="Sheet1"):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
-    processed_data = output.getvalue()
-    return processed_data
+def remove_volunteer(roll):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM volunteers WHERE roll_number = ?", (roll,))
+    conn.commit()
+    conn.close()
 
-# ---------- Streamlit UI ----------
-st.set_page_config(page_title="NSS Elections", layout="centered")
-st.title("📮 NSS Election Voting System")
+def remove_candidate(roll):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM candidates WHERE roll_number = ?", (roll,))
+    conn.commit()
+    conn.close()
 
-if 'volunteer_logged_in' not in st.session_state:
-    st.session_state['volunteer_logged_in'] = False
-if 'volunteer_info' not in st.session_state:
-    st.session_state['volunteer_info'] = None
-if 'admin_logged_in' not in st.session_state:
-    st.session_state['admin_logged_in'] = False
+# ----------------------------------
+# Session State Initialization
+# ----------------------------------
+def init_session_state():
+    if "admin_user" not in st.session_state:
+        st.session_state.admin_user = ""
+    if "admin_password" not in st.session_state:
+        st.session_state.admin_password = ""
+    if "admin_logged_in" not in st.session_state:
+        st.session_state.admin_logged_in = False
+    if "volunteer_logged_in" not in st.session_state:
+        st.session_state.volunteer_logged_in = False
+    if "volunteer_id" not in st.session_state:
+        st.session_state.volunteer_id = None
+    if "volunteer_name" not in st.session_state:
+        st.session_state.volunteer_name = ""
+    if "user_votes" not in st.session_state:
+        st.session_state.user_votes = {}
 
-menu = st.sidebar.selectbox("Select Mode", ["Volunteer Login", "Admin Login"])
+# ----------------------------------
+# Admin Login Page
+# ----------------------------------
+def admin_login_page():
+    st.title("🗳️ NSS Election System - Admin Login")
+    st.text_input("Username", key="admin_user")
+    st.text_input("Password", type="password", key="admin_password")
 
-branches = ["CSE", "CSE(DS)", "CSE(AI&ML)", "CIVIL", "MECH", "EEE", "ECE", "EIE"]
-positions = ["President", "Vice President", "Secretary", "Event Co ordinator", "Treasurer",
-             "Executive Member", "Digital Coordinator (Photography)", "Media Coordinator (Social Media, Poster)",
-             "File Coordinator", "Joint Secretary", "Incharge of VIGNAN PRANADHARA"]
+    if st.button("Login"):
+        if check_admin_credentials(st.session_state.admin_user, st.session_state.admin_password):
+            st.session_state.admin_logged_in = True
+            st.success("✅ Login Successful")
+            st.rerun()
+        else:
+            st.error("❌ Invalid username or password")
 
-if menu == "Volunteer Login":
-    st.header("🎓 NSS Volunteer Login")
+# ----------------------------------
+# Admin Panel Page
+# ----------------------------------
+def admin_panel_page():
+    st.title("Admin Panel - NSS Election System")
+    st.write(f"Welcome, **{st.session_state.admin_user}**")
 
-    if not st.session_state['volunteer_logged_in']:
-        student_id = st.text_input("Enter your Student ID")
-        if st.button("Login"):
-            if not student_id:
-                st.warning("Please enter your Student ID.")
-            else:
-                volunteer = get_volunteer(student_id)
-                if not volunteer:
-                    st.error("❌ You are not a registered NSS volunteer.")
-                else:
-                    st.session_state['volunteer_logged_in'] = True
-                    st.session_state['volunteer_info'] = volunteer
-                    st.rerun()
-    else:
-        student_id, name, voted = st.session_state['volunteer_info']
-        st.success(f"Welcome {name}!")
-
-        if voted:
-                        # --- Voting Section for Each Position ---
-            st.header("🗳️ Vote for Candidates")
-
+    # Volunteer Add Section
+    st.subheader("👥 Add Volunteer")
+    with st.form("add_volunteer_form", clear_on_submit=True):
+        name = st.text_input("Name")
+        roll_number = st.text_input("Roll Number")
+        phone = st.text_input("Phone Number")
+        year = st.selectbox("Year", ["1st", "2nd", "3rd", "4th"])
+        submitted_vol = st.form_submit_button("Add Volunteer")
+        if submitted_vol:
             conn = get_db_connection()
             c = conn.cursor()
+            try:
+                c.execute("INSERT INTO volunteers (name, roll_number, phone_number, year) VALUES (?, ?, ?, ?)",
+                          (name, roll_number, phone, year))
+                conn.commit()
+                st.success("Volunteer added successfully")
+            except Exception as e:
+                st.error(f"Error: {e}")
+            conn.close()
 
-            # Get all distinct positions
-            c.execute("SELECT DISTINCT position1 FROM candidates")
-            unique_positions = [row[0] for row in c.fetchall()]
+    # Candidate Add Section
+    st.subheader("🧑‍💼 Add Candidate")
+    with st.form("add_candidate_form", clear_on_submit=True):
+        cname = st.text_input("Candidate Name")
+        croll = st.text_input("Candidate Roll Number")
+        cyear = st.selectbox("Candidate Year", ["1st", "2nd", "3rd", "4th"])
+        position1 = st.text_input("Position 1")
+        position2 = st.text_input("Position 2 (optional)")
+        photo = st.file_uploader("Upload Photo", type=["jpg", "jpeg", "png"])
+        submitted_cand = st.form_submit_button("Add Candidate")
+        if submitted_cand:
+            conn = get_db_connection()
+            c = conn.cursor()
+            try:
+                photo_bytes = photo.read() if photo else None
+                c.execute("INSERT INTO candidates (name, roll_number, year, position1, position2, photo) VALUES (?, ?, ?, ?, ?, ?)",
+                          (cname, croll, cyear, position1, position2, photo_bytes))
+                conn.commit()
+                st.success("Candidate added successfully")
+            except Exception as e:
+                st.error(f"Error: {e}")
+            conn.close()
 
-            # To store selected candidate per position
-            selected_votes = {}
+    # Downloads
+    st.subheader("📊 Downloads")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("### Volunteers")
+        dfv = get_all_volunteers()
+        st.download_button("Download Volunteers", dfv.to_csv(index=False), "volunteers.csv")
+    with col2:
+        st.markdown("### Candidates")
+        dfc = get_all_candidates()
+        st.download_button("Download Candidates", dfc.to_csv(index=False), "candidates.csv")
+    with col3:
+        st.markdown("### Votes")
+        dfvotes = get_votes_csv()
+        st.download_button("Download Votes", dfvotes.to_csv(index=False), "votes.csv")
 
-            st.header("🗳️ Vote for Candidates")
+    # Remove Volunteers or Candidates
+    st.subheader("🗑️ Remove Volunteer or Candidate")
 
-conn = get_db_connection()
-c = conn.cursor()
+    volunteers = get_all_volunteers().to_dict(orient='records')
+    candidates = get_all_candidates().to_dict(orient='records')
 
-# Get all distinct positions
-c.execute("SELECT DISTINCT position1 FROM candidates")
-unique_positions = [row[0] for row in c.fetchall()]
+    st.markdown("**Volunteers:**")
+    vol_rolls = [v['roll_number'] for v in volunteers]
+    vol_to_remove = st.selectbox("Select Volunteer Roll Number to Remove", [""] + vol_rolls)
+    if st.button("Remove Volunteer") and vol_to_remove:
+        remove_volunteer(vol_to_remove)
+        st.success(f"Removed volunteer with roll {vol_to_remove}")
+        st.rerun()
 
-selected_votes = {}
+    st.markdown("**Candidates:**")
+    cand_rolls = [c['roll_number'] for c in candidates]
+    cand_to_remove = st.selectbox("Select Candidate Roll Number to Remove", [""] + cand_rolls)
+    if st.button("Remove Candidate") and cand_to_remove:
+        remove_candidate(cand_to_remove)
+        st.success(f"Removed candidate with roll {cand_to_remove}")
+        st.rerun()
 
-for pos in unique_positions:
-    with st.container():
-        st.markdown(f"### 🧾 Position: {pos}")
+    if st.button("Logout"):
+        st.session_state.admin_logged_in = False
+        st.session_state.admin_user = ""
+        st.session_state.admin_password = ""
+        st.rerun()
 
-        # Check if already voted for this position
-        if has_voted(student_id, pos):
-            st.info(f"✅ You have already voted for **{pos}**.")
-            continue
+# ----------------------------------
+# Volunteer Login Page
+# ----------------------------------
+def volunteer_login_page():
+    st.title("🗳️ NSS Election System - Volunteer Login")
+    roll = st.text_input("Enter Your Roll Number")
+    if st.button("Login"):
+        volunteer = get_volunteer_by_roll(roll)
+        if volunteer:
+            st.session_state.volunteer_logged_in = True
+            st.session_state.volunteer_id = volunteer['id']
+            st.session_state.volunteer_name = volunteer['name']
+            st.success(f"Welcome {volunteer['name']}!")
+            st.rerun()
+        else:
+            st.error("Volunteer not found. Please check your roll number.")
 
-        # Get candidates for this position
-        c.execute("SELECT id, name FROM candidates WHERE position1 = ?", (pos,))
+# ----------------------------------
+# Voting Page
+# ----------------------------------
+def voting_page():
+    st.title(f"🗳️ Vote Now, {st.session_state.volunteer_name}")
+
+    positions = get_unique_positions()
+    if not positions:
+        st.warning("No positions found. Contact admin.")
+        return
+
+    votes = {}
+    for pos in positions:
+        # Fetch candidates for this position
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT id, name, roll_number FROM candidates WHERE position1=? OR position2=?", (pos, pos))
         candidates = c.fetchall()
+        conn.close()
 
-        if candidates:
-            # Dictionary of {name: id}
-            candidate_dict = {name: cid for cid, name in candidates}
-            candidate_names = list(candidate_dict.keys())
+        options = {f"{cand['name']} ({cand['roll_number']})": cand['id'] for cand in candidates}
+        choice = st.radio(f"Select candidate for position: {pos}", options.keys())
+        votes[pos] = options[choice]
 
-            selected_name = st.radio(
-                "Choose your candidate:",
-                candidate_names,
-                key=f"vote_{pos.replace(' ', '_')}"
-            )
+    if st.button("Submit Vote"):
+        # Check if volunteer has voted for any position
+        already_voted_positions = [pos for pos in positions if has_voted(st.session_state.volunteer_id, pos)]
 
-            if selected_name:
-                selected_votes[pos] = candidate_dict[selected_name]
+        if already_voted_positions:
+            st.error(f"You have already voted for position(s): {', '.join(already_voted_positions)}")
         else:
-            st.warning("No candidates available for this position.")
-
-conn.close()
-
-# Submit votes button
-if selected_votes:
-    if st.button("Submit All Votes"):
-        voted_positions = []
-        for pos, cid in selected_votes.items():
-            if vote_for_candidate(cid, student_id, pos):
-                voted_positions.append(pos)
-
-        if voted_positions:
-            st.success(f"✅ Votes submitted for: {', '.join(voted_positions)}")
-            st.session_state['volunteer_info'] = (student_id, name, 1)
-            st.experimental_rerun()
-        else:
-            st.warning("⚠️ You may have already voted for these positions.")
-else:
-    st.info("Please select a candidate for each position.")
-
-
-
-        if st.button("Logout"):
-            st.session_state['volunteer_logged_in'] = False
-            st.session_state['volunteer_info'] = None
+            # Submit votes
+            for pos, candidate_id in votes.items():
+                submit_vote(st.session_state.volunteer_id, candidate_id, pos)
+            st.success("Thank you! Your votes have been submitted.")
+            # Logout volunteer after voting
+            st.session_state.volunteer_logged_in = False
+            st.session_state.volunteer_id = None
+            st.session_state.volunteer_name = ""
             st.rerun()
 
-elif menu == "Admin Login":
-    st.header("🔐 Admin Login")
+    if st.button("Logout"):
+        st.session_state.volunteer_logged_in = False
+        st.session_state.volunteer_id = None
+        st.session_state.volunteer_name = ""
+        st.rerun()
 
-    if not st.session_state['admin_logged_in']:
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password",key="password",autocomplete="off")
-        if st.button("Login"):
-            if check_admin_credentials(username, password):
-                st.session_state['admin_logged_in'] = True
-                st.rerun()
-            else:
-                st.error("❌ Invalid credentials.")
+# ----------------------------------
+# Main App Logic
+# ----------------------------------
+def main():
+    st.sidebar.title("NSS Election System")
+
+    if st.session_state.admin_logged_in:
+        page = st.sidebar.selectbox("Admin Menu", ["Admin Panel", "Logout"])
+        if page == "Admin Panel":
+            admin_panel_page()
+        elif page == "Logout":
+            st.session_state.admin_logged_in = False
+            st.session_state.admin_user = ""
+            st.session_state.admin_password = ""
+            st.rerun()
+
+    elif st.session_state.volunteer_logged_in:
+        page = st.sidebar.selectbox("Volunteer Menu", ["Vote", "Logout"])
+        if page == "Vote":
+            voting_page()
+        elif page == "Logout":
+            st.session_state.volunteer_logged_in = False
+            st.session_state.volunteer_id = None
+            st.session_state.volunteer_name = ""
+            st.rerun()
+
     else:
-        st.success("Admin logged in.")
-
-        st.subheader("➕ Register NSS Volunteer")
-        with st.form("volunteer_form"):
-            vol_id = st.text_input("Student ID")
-            vol_name = st.text_input("Full Name")
-            vol_year = st.selectbox("Year", [1, 2, 3])
-            vol_branch = st.selectbox("Branch", branches)
-            vol_phone = st.text_input("Phone Number")
-            if st.form_submit_button("Add Volunteer"):
-                if vol_id and vol_name and vol_phone:
-                    if add_volunteer(vol_id, vol_name, vol_year, vol_branch, vol_phone):
-                        st.success("Volunteer added.")
-                    else:
-                        st.warning("Student ID already exists.")
-                else:
-                    st.warning("Please fill all fields.")
-
-        st.markdown("---")
-
-        st.subheader("➕ Add Candidate")
-        with st.form("candidate_form"):
-            cand_name = st.text_input("Candidate Name")
-            roll = st.text_input("Roll Number")
-            year = st.selectbox("Year", [1, 2, 3], key="c_year")
-            branch = st.selectbox("Branch", branches, key="c_branch")
-            phone = st.text_input("Phone Number", key="c_phone")
-            pos1 = st.selectbox("Position 1", positions)
-            pos2 = st.selectbox("Position 2 (Optional)", ["None"] + positions)
-            photo = st.file_uploader("Upload Photo", type=["png", "jpg", "jpeg"])
-            if st.form_submit_button("Add Candidate"):
-                if cand_name and photo:
-                    add_candidate(cand_name, roll, year, branch, phone, pos1, pos2, photo)
-                    st.success("Candidate added.")
-                else:
-                    st.warning("Fill both name and photo.")
-
-        st.markdown("---")
-        
-        st.subheader("🗑️ Remove Candidate")
-        candidates = get_candidates()
-        if candidates:
-            candidate_dict = {f"{name} ({branch})": cid for cid, name, _, _ in [(c[0], c[1], None, None) for c in candidates]}
-            selected_cand = st.selectbox("Select Candidate to Remove", list(candidate_dict.keys()))
-            if st.button("Remove Candidate"):
-                delete_candidate(candidate_dict[selected_cand])
-                st.success("Candidate removed.")
+        user_type = st.sidebar.selectbox("Login As", ["Admin", "Volunteer"])
+        if user_type == "Admin":
+            admin_login_page()
         else:
-            st.info("No candidates available.")
+            volunteer_login_page()
 
-        st.markdown("---")
-
-        st.subheader("🗑️ Remove Volunteer")
-        volunteers = get_volunteers_df()
-        if not volunteers.empty:
-            volunteer_list = volunteers['student_id'].tolist()
-            selected_vol = st.selectbox("Select Volunteer to Remove", volunteer_list)
-            if st.button("Remove Volunteer"):
-                delete_volunteer(selected_vol)
-                st.success("Volunteer removed.")
-        else:
-            st.info("No volunteers found.")
-        
-        st.subheader("📋 View Volunteers")
-        volunteers_df = get_volunteers_df()
-        st.dataframe(volunteers_df)
-
-        st.download_button(label="Download Volunteers as Excel", data=to_excel(volunteers_df), file_name="volunteers.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        
-        st.subheader("View Candidates")
-        candidates_df=get_candidates_df()
-        st.dataframe(candidates_df)
-        
-        st.download_button(label="Download Candidates as Exce", data=to_excel(candidates_df), file_name="candidates.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-
-        st.subheader("📊 Election Results")
-        df = get_results_df()
-        st.dataframe(df)
-
-        excel_data = to_excel(df)
-        st.download_button("Download Results (Excel)", data=excel_data, file_name="results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-        if st.button("Logout"):
-            st.session_state['admin_logged_in'] = False
-            st.rerun()
+# ----------------------------------
+# Run setup and app
+# ----------------------------------
+if __name__ == "__main__":
+    init_session_state()
+    create_tables()
+    create_admin()
+    main()
