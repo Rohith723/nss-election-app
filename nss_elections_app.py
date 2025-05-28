@@ -197,6 +197,20 @@ def admin_login_page():
         else:
             st.error("❌ Invalid username or password")
 
+
+def get_live_vote_counts():
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""
+        SELECT vt.position, c.name, COUNT(vt.id) as votes
+        FROM votes vt
+        JOIN candidates c ON vt.candidate_id = c.id
+        GROUP BY vt.position, c.id
+        ORDER BY vt.position, votes DESC
+    """)
+    results = c.fetchall()
+    conn.close()
+    return results
 # ----------------------------------
 # Admin Panel Page
 # ----------------------------------
@@ -246,6 +260,18 @@ def admin_panel_page():
             except Exception as e:
                 st.error(f"Error: {e}")
             conn.close()
+    
+        st.subheader("Live Vote Counts")
+        vote_counts = get_live_vote_counts()
+        if vote_counts:
+            current_position = None
+            for position, candidate_name, votes in vote_counts:
+                if position != current_position:
+                    st.markdown(f"### Position: {position}")
+                    current_position = position
+                st.write(f"**{candidate_name}** : {votes} votes")
+        else:
+            st.write("No votes have been cast yet.")
 
     # Downloads
     st.subheader("📊 Downloads")
