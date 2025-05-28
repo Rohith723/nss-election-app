@@ -211,70 +211,11 @@ def get_live_vote_counts():
     results = c.fetchall()
     conn.close()
     return results
-    
-# ----------------------------------
-# Volunteer Login Page
-# ----------------------------------
-def volunteer_login_page():
-    st.title("🗳️ NSS Election System - Volunteer Login")
-    roll = st.text_input("Enter Your Roll Number")
-    if st.button("Login"):
-        volunteer = get_volunteer_by_roll(roll)
-        if volunteer:
-            st.session_state.volunteer_logged_in = True
-            st.session_state.volunteer_id = volunteer['id']
-            st.session_state.volunteer_name = volunteer['name']
-            st.success(f"Welcome {volunteer['name']}!")
-            st.rerun()
-        else:
-            st.error("Volunteer not found. Please check your roll number.")
-
-# ----------------------------------
-# Voting Page
-# ----------------------------------
-def voting_page():
-    st.title(f"🗳️ Vote Now, {st.session_state.volunteer_name}")
-
-    positions = get_unique_positions()
-    if not positions:
-        st.warning("No positions found. Contact admin.")
-        return
-
-    votes = {}
-    for pos in positions:
-        # Fetch candidates for this position
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("SELECT id, name, roll_number FROM candidates WHERE position1=? OR position2=?", (pos, pos))
-        candidates = c.fetchall()
-        conn.close()
-
-        options = {f"{cand['name']} ({cand['roll_number']})": cand['id'] for cand in candidates}
-        choice = st.radio(f"Select candidate for position: {pos}", options.keys())
-        votes[pos] = options[choice]
-
-    if st.button("Submit Vote"):
-        # Check if volunteer has voted for any position
-        already_voted_positions = [pos for pos in positions if has_voted(st.session_state.volunteer_id, pos)]
-
-        if already_voted_positions:
-            st.error(f"You have already voted for position(s): {', '.join(already_voted_positions)}")
-        else:
-            # Submit votes
-            for pos, candidate_id in votes.items():
-                submit_vote(st.session_state.volunteer_id, candidate_id, pos)
-            st.success("Thank you! Your votes have been submitted.")
-            # Logout volunteer after voting
-            st.session_state.volunteer_logged_in = False
-            st.session_state.volunteer_id = None
-            st.session_state.volunteer_name = ""
-            st.rerun()
-
 # ----------------------------------
 # Admin Panel Page
 # ----------------------------------
 def admin_panel_page():
-    st.title("Admin Panel - NSS Election System")
+    st.title("Admin Panel - VGNT NSS Election System")
     st.write(f"Welcome, **{st.session_state.admin_user}**")
 
     # Volunteer Add Section
@@ -375,6 +316,64 @@ def admin_panel_page():
         st.session_state.admin_user = ""
         st.session_state.admin_password = ""
         st.rerun()
+
+# ----------------------------------
+# Volunteer Login Page
+# ----------------------------------
+def volunteer_login_page():
+    st.title("🗳️ VGNT NSS Election System - Volunteer Login")
+    roll = st.text_input("Enter Your Roll Number")
+    if st.button("Login"):
+        volunteer = get_volunteer_by_roll(roll)
+        if volunteer:
+            st.session_state.volunteer_logged_in = True
+            st.session_state.volunteer_id = volunteer['id']
+            st.session_state.volunteer_name = volunteer['name']
+            st.success(f"Welcome {volunteer['name']}!")
+            st.rerun()
+        else:
+            st.error("Volunteer not found. Please check your roll number.")
+
+# ----------------------------------
+# Voting Page
+# ----------------------------------
+def voting_page():
+    st.title(f"🗳️ Vote Now, {st.session_state.volunteer_name}")
+
+    positions = get_unique_positions()
+    if not positions:
+        st.warning("No positions found. Contact admin.")
+        return
+
+    votes = {}
+    for pos in positions:
+        # Fetch candidates for this position
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT id, name, roll_number FROM candidates WHERE position1=? OR position2=?", (pos, pos))
+        candidates = c.fetchall()
+        conn.close()
+
+        options = {f"{cand['name']} ({cand['roll_number']})": cand['id'] for cand in candidates}
+        choice = st.radio(f"Select candidate for position: {pos}", options.keys())
+        votes[pos] = options[choice]
+
+    if st.button("Submit Vote"):
+        # Check if volunteer has voted for any position
+        already_voted_positions = [pos for pos in positions if has_voted(st.session_state.volunteer_id, pos)]
+
+        if already_voted_positions:
+            st.error(f"You have already voted for position(s): {', '.join(already_voted_positions)}")
+        else:
+            # Submit votes
+            for pos, candidate_id in votes.items():
+                submit_vote(st.session_state.volunteer_id, candidate_id, pos)
+            st.success("Thank you! Your votes have been submitted.")
+            # Logout volunteer after voting
+            st.session_state.volunteer_logged_in = False
+            st.session_state.volunteer_id = None
+            st.session_state.volunteer_name = ""
+            st.rerun()
 
     if st.button("Logout"):
         st.session_state.volunteer_logged_in = False
