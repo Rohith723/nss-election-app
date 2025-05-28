@@ -17,6 +17,12 @@ def hash_password(password):
 def create_tables():
     conn = get_db_connection()
     c = conn.cursor()
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS admin (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE,
+    password TEXT
+    )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS admin (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,8 +34,8 @@ def create_tables():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
         roll_number TEXT UNIQUE,
-        phone_number TEXT,
-        year TEXT
+        year TEXT,
+        branch TEXT
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS candidates (
@@ -37,6 +43,7 @@ def create_tables():
         name TEXT,
         roll_number TEXT UNIQUE,
         year TEXT,
+        branch TEXT,
         position1 TEXT,
         position2 TEXT,
         photo BLOB
@@ -63,6 +70,10 @@ def create_admin():
                   ('admin', hash_password('admin123')))
         conn.commit()
     conn.close()
+    
+def admin_login(username, password):
+    c.execute("SELECT * FROM admin WHERE username=? AND password=?", (username, password))
+    return c.fetchone()    
 
 def check_admin_credentials(username, password):
     conn = get_db_connection()
@@ -133,7 +144,7 @@ def get_all_volunteers():
 
 def get_all_candidates():
     conn = get_db_connection()
-    df = pd.read_sql_query("SELECT name, roll_number, year, position1, position2 FROM candidates", conn)
+    df = pd.read_sql_query("SELECT name, roll_number, year,branch, position1, position2 FROM candidates", conn)
     conn.close()
     return df
 
@@ -185,7 +196,7 @@ def init_session_state():
 # Admin Login Page
 # ----------------------------------
 def admin_login_page():
-    st.title("🗳️ VGNT NSS Election System - Admin Login")
+    st.title("🗳️ NSS Election System - Admin Login")
     st.text_input("Username", key="admin_user")
     st.text_input("Password", type="password", key="admin_password")
 
@@ -215,23 +226,24 @@ def get_live_vote_counts():
 # Admin Panel Page
 # ----------------------------------
 def admin_panel_page():
-    st.title("Admin Panel - VGNT NSS Election System")
+    st.title("Admin Panel - NSS Election System")
     st.write(f"Welcome, **{st.session_state.admin_user}**")
+    branches = ["CSE", "EEE", "MECH", "AI&ML", "AI&DS", "CSD", "EIE", "CIVIL", "ECE"]
 
     # Volunteer Add Section
     st.subheader("👥 Add Volunteer")
     with st.form("add_volunteer_form", clear_on_submit=True):
         name = st.text_input("Name")
         roll_number = st.text_input("Roll Number")
-        phone = st.text_input("Phone Number")
         year = st.selectbox("Year", ["1st", "2nd", "3rd", "4th"])
+        branch = st.selectbox("Branch", branches)
         submitted_vol = st.form_submit_button("Add Volunteer")
         if submitted_vol:
             conn = get_db_connection()
             c = conn.cursor()
             try:
-                c.execute("INSERT INTO volunteers (name, roll_number, phone_number, year) VALUES (?, ?, ?, ?)",
-                          (name, roll_number, phone, year))
+                c.execute("INSERT INTO volunteers (name, roll_number, year, branch) VALUES (?, ?, ?, ?)",
+                          (name, roll_number, year, branch))
                 conn.commit()
                 st.success("Volunteer added successfully")
             except Exception as e:
@@ -243,7 +255,8 @@ def admin_panel_page():
     with st.form("add_candidate_form", clear_on_submit=True):
         cname = st.text_input("Candidate Name")
         croll = st.text_input("Candidate Roll Number")
-        cyear = st.selectbox("Candidate Year", ["1st", "2nd", "3rd", "4th"])
+        cyear = st.selectbox("Candidate Year", ["1st", "2nd", "3rd"])
+        cbranch = st.selectbox("Candidate Branch", branches)
         position1 = st.text_input("Position 1")
         position2 = st.text_input("Position 2 (optional)")
         photo = st.file_uploader("Upload Photo", type=["jpg", "jpeg", "png"])
@@ -253,8 +266,8 @@ def admin_panel_page():
             c = conn.cursor()
             try:
                 photo_bytes = photo.read() if photo else None
-                c.execute("INSERT INTO candidates (name, roll_number, year, position1, position2, photo) VALUES (?, ?, ?, ?, ?, ?)",
-                          (cname, croll, cyear, position1, position2, photo_bytes))
+                c.execute("INSERT INTO candidates (name, roll_number, year, branch, position1, position2, photo) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                          (cname, croll, cyear, cbranch, position1, position2, photo_bytes))
                 conn.commit()
                 st.success("Candidate added successfully")
             except Exception as e:
@@ -321,7 +334,7 @@ def admin_panel_page():
 # Volunteer Login Page
 # ----------------------------------
 def volunteer_login_page():
-    st.title("🗳️ VGNT NSS Election System - Volunteer Login")
+    st.title("🗳️ NSS Election System - Volunteer Login")
     roll = st.text_input("Enter Your Roll Number")
     if st.button("Login"):
         volunteer = get_volunteer_by_roll(roll)
@@ -385,7 +398,7 @@ def voting_page():
 # Main App Logic
 # ----------------------------------
 def main():
-    st.sidebar.title("VGNT NSS Election System")
+    st.sidebar.title("NSS Election System")
 
     if st.session_state.admin_logged_in:
         page = st.sidebar.selectbox("Admin Menu", ["Admin Panel", "Logout"])
