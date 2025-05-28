@@ -185,7 +185,7 @@ def init_session_state():
 # Admin Login Page
 # ----------------------------------
 def admin_login_page():
-    st.title("🗳️ NSS Election System - Admin Login")
+    st.title("🗳️ VGNT NSS Election System - Admin Login")
     st.text_input("Username", key="admin_user")
     st.text_input("Password", type="password", key="admin_password")
 
