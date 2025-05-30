@@ -228,7 +228,7 @@ def get_live_vote_counts():
 def admin_panel_page():
     st.title("Admin Panel - NSS Election System")
     st.write(f"Welcome, **{st.session_state.admin_user}**")
-    branches = ["CSE", "EEE", "MECH", "AI&ML", "AI&DS", "CSD", "EIE", "CIVIL", "ECE"]
+    branches = ["CSE", "EEE", "MECH", "AI&ML", "AI&DS", "CSD", "EIE", "CIVIL", "ECE", "IT"]
 
     # Volunteer Add Section
     st.subheader("👥 Add Volunteer")
